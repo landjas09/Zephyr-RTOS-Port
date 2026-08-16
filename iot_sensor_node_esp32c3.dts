@@ -1,0 +1,211 @@
+/dts-v1/;
+
+#include <espressif/esp32c3/esp32c3_wroom_n4.dtsi>
+#include "iot_sensor_node_esp32c3-pinctrl.dtsi"
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <espressif/partitions_0x0_default.dtsi>
+
+/ {
+	model = "iot_sensor_node_esp32c3";
+	compatible = "espressif,esp32c3";
+
+	chosen {
+		zephyr,sram = &sram1;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+		zephyr,bt-hci = &esp32_bt_hci;
+	};
+
+	aliases {
+		sw0 = &boot_button;
+		i2c-0 = &i2c0;
+		watchdog0 = &wdt0;
+	};
+
+        gpio_keys {
+                compatible = "gpio-keys";
+
+                boot_button: button_0 {
+                label = "BOOT";
+                gpios = <&gpio0 9 GPIO_ACTIVE_LOW>;
+
+               /*
+                * BOOT button
+                *
+                * GPIO9 is an ESP32-C3 strapping pin with an internal weak pull-up.
+                * The button pulls GPIO9 low when pressed.
+                *
+                * GPIO9 = HIGH -> normal SPI boot
+                * GPIO9 = LOW  -> download/bootloader mode when sampled at reset
+                */
+
+                zephyr,code = <INPUT_KEY_0>;
+                };
+        };
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+
+	bme280@76 {
+		compatible = "bosch,bme280";
+		reg = <0x76>;
+	};
+
+        /*
+         * OLED NODE:
+         * OLED interface is exposed through a breakout header.
+         * No specific OLED controller is populated on the board.
+         *
+         * Users must provide an application overlay defining the
+         * compatible OLED controller and its required properties.
+         */
+};
+
+&spi2 {
+	#address-cells = <1>;
+        #size-cells = <0>;
+        status = "okay";
+
+	pinctrl-0 = <&spim2_default>;
+	pinctrl-names = "default";
+
+	cs-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>,
+		   <&gpio0 5 GPIO_ACTIVE_LOW>;
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <1330000>;
+                jedec-id = [ef 40 16];
+                size = <0x400000>;
+	};
+
+	sd@1 {
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <1>;
+
+		/*
+		 * Generic starting frequency for SPI SD cards.
+		 * Adjust according to the specific SD card model
+		 * and its supported SPI operating frequency.
+		 */
+		spi-max-frequency = <25000000>;
+                mmc {
+                compatible = "zephyr,sdmmc-disk";
+                disk-name = "SD";
+                status = "okay";
+                };
+	    };
+};
+
+&adc0 {
+       status = "okay";
+       #address-cells = <1>;
+       #size-cells = <0>;
+       channel@0 {
+         reg = <0>;
+
+        /*
+         * MAX4466 microphone amplifier:
+         * MIC-OUT is connected to GPIO0 (ADC input).
+         *
+         * The MAX4466 is powered from 3.3 V and produces an amplified
+         * analog signal around its internally biased output level.
+         *
+         * Higher attenuation is selected to provide sufficient ADC
+         * headroom for amplified microphone signals.
+         *
+         * The attenuation can be changed depending on the amplifier gain
+         * and expected sound level.
+         *
+         * See:
+         * - ESP32-C3 ADC documentation for supported attenuation levels
+         * - dts/bindings/adc/espressif,esp32-adc.yaml for Zephyr's
+         *   attenuation-to-gain mapping.
+         */
+
+	zephyr,gain = "ADC_GAIN_1_4";
+	zephyr,reference = "ADC_REF_INTERNAL";
+	zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+        };
+        channel@1 {
+	reg = <1>;
+
+	/*
+	 * TEMT6000 ambient-light sensor:
+	 * PHOTO-C is connected to GPIO1 through a 10 kOhm resistor.
+	 *
+	 * The sensor's photocurrent increases with illumination, so the
+	 * voltage seen by the ADC also increases with light intensity.
+	 *
+	 * 6 dB attenuation (ADC_GAIN_1_2) provides additional voltage
+	 * headroom for higher illumination levels while retaining good
+	 * resolution for typical ambient-light measurements.
+	 *
+	 * The attenuation can be changed depending on the expected
+	 * illumination range and application.
+	 *
+	 * ESP32-C3 supported attenuation levels and voltage ranges:
+	 * https://docs.espressif.com/projects/esp-idf/en/stable/esp32c3/api-reference/peripherals/adc/index.html
+	 *
+	 * Zephyr's mapping between ESP32 attenuation and zephyr,gain
+	 * is defined in:
+	 * dts/bindings/adc/espressif,esp32-adc.yaml
+	 *
+	 * 0 dB  -> ADC_GAIN_1
+	 * 2.5 dB -> ADC_GAIN_4_5
+	 * 6 dB -> ADC_GAIN_1_2
+	 * 11 dB -> ADC_GAIN_1_4
+	 */
+	zephyr,gain = "ADC_GAIN_1_2";
+
+	zephyr,reference = "ADC_REF_INTERNAL";
+	zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+        };
+};
+
+       /*
+        * User Breakout
+        *
+        * The following GPIOs are exposed on the breakout header and are left
+        * unassigned in the base board definition:
+        *
+        *   GPIO8
+        *   GPIO18
+        *   GPIO19
+        *
+        * Users may configure these pins for additional peripherals or GPIO
+        * devices through a Devicetree overlay.
+        */
+&gpio0 {
+    status = "okay";
+};
+
+&wdt0 {
+    status = "okay";
+};
+
+&trng0 {
+    status = "okay";
+};
+
+&esp32_bt_hci {
+    status = "okay";
+};
+
+&wifi {
+    status = "okay";
+};

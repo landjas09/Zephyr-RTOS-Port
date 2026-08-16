@@ -1,0 +1,5 @@
+board:
+  name: iot_sensor_node_esp32c3
+  vendor: others
+  socs:
+    - name: esp32c3

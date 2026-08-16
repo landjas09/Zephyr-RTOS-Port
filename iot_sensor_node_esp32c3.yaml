@@ -1,0 +1,18 @@
+identifier: iot_sensor_node_esp32c3
+name: IoT Sensor Node ESP32-C3
+type: mcu
+arch: riscv
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - gpio
+  - i2c
+  - watchdog
+  - uart
+  - dma
+  - pwm
+  - spi
+  - counter
+  - entropy
+vendor: espressif

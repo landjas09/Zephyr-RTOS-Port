@@ -1,0 +1,6 @@
+# IoT Sensor Node ESP32-C3 board configuration
+
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_IOT_SENSOR_NODE_ESP32C3
+    select SOC_ESP32C3_WROOM_02_N4
