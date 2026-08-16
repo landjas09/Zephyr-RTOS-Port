@@ -2,7 +2,7 @@
 
 Zephyr board support for the custom ESP32-C3 IoT Sensor Node hardware, developed against **Zephyr 4.2.0-rc1** and targeting the **ESP32-C3-WROOM-02-H4** module.
 
-This document covers the software port only. Hardware design and PCB documentation live in the [main project README](../README.md).
+This document covers the software port only. Hardware design and PCB documentation live in the [[main project README](../README.md).](https://github.com/landjas09/Custom-IoT-development-board-ESP32-C3/blob/main/README.md)
 
 ---
 
