@@ -32,8 +32,6 @@ There's also a practical, career-facing reason for the choice: Zephyr is the RTO
 
 The port adds `iot_sensor_node_esp32c3` as a native Zephyr board target, exposing the board's peripherals through Devicetree and Kconfig so that standard Zephyr applications can be built against the hardware without board-specific application code.
 
-The existing ESP32-C3 SoC support provided by Zephyr and the Espressif HAL is reused in full — the port does not reimplement the SoC layer. The board definition is responsible only for describing how the SoC's existing resources (GPIO matrix, I²C, SPI, UART, ADC) connect to this specific board's hardware.
-
 ```
 Existing Zephyr ESP32-C3 SoC support
         │
