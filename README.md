@@ -1,8 +1,10 @@
-# Zephyr RTOS Port — ESP32-C3 IoT Sensor Node
+# Zephyr RTOS Port — ESP32-C3 Secure-Ready Battery-Powered Edge Logger
 
-Zephyr board support for the custom ESP32-C3 IoT Sensor Node hardware, developed against **Zephyr 4.2.0-rc1** and targeting the **ESP32-C3-WROOM-02-H4** module.
+Zephyr board support for the custom **ESP32-C3 Secure-Ready Battery-Powered Edge Logger**, developed against **Zephyr 4.2.0-rc1** and targeting the **ESP32-C3-WROOM-02-H4** module.
 
-This document covers the software port only. Hardware design and PCB documentation live in the (https://github.com/landjas09/Custom-IoT-development-board-ESP32-C3/blob/main/README.md)
+This port is the Rev 2 evolution of the original ESP32-C3 IoT Sensor Node support. The original sensing, storage, UART, ADC, SPI, GPIO, and USB/JTAG configuration is retained, while the board Devicetree is extended for the **DS3231SN battery-backed RTC**, **BQ27441-G1A fuel gauge**, and **NXP EdgeLock SE050E2 secure-element transport**.
+
+This document covers the software port only. Hardware design and PCB documentation live in the [hardware repository](https://github.com/landjas09/Custom-IoT-development-board-ESP32-C3/tree/main/hardware/rev2_secure-edge-logger).
 
 ---
 
@@ -19,35 +21,67 @@ This document covers the software port only. Hardware design and PCB documentati
 9. [Problems Encountered & Resolutions](#9-problems-encountered--resolutions)
 10. [Current Status](#10-current-status)
 11. [References](#11-references)
+12. [Revision History](#12-revision-history)
 
 ---
 
 ## 1. Overview
 
-The board was originally developed on Arduino/ESP-IDF, which is a reasonable starting point for early hardware bring-up but starts to show real limits once a project grows past a single sketch-style `loop()`. This board runs several genuinely concurrent responsibilities — polling I²C sensors, streaming analog samples from the microphone, servicing SPI transfers to the SD card and flash chip, and handling UART/USB communication — and coordinating all of that correctly on bare ESP-IDF means hand-rolling scheduling, synchronization, and timing logic that a proper RTOS already provides as first-class primitives (threads, mutexes, semaphores, message queues, work queues).
+The original port moved the custom ESP32-C3 board into Zephyr's board-support model so hardware description, pin assignment, buses, and board defaults are kept outside application code. Rev 1 already exposed the board's core sensing, storage, ADC, SPI, UART, GPIO, and debug resources through standard Zephyr mechanisms.
 
-Zephyr also decouples the *hardware description* from the *application logic* in a way ESP-IDF/Arduino don't: peripherals, pin assignments, and bus topology live in Devicetree and Kconfig rather than being wired directly into application code. That means the same firmware can target a different board revision, or even a different MCU family entirely, by swapping the board definition rather than rewriting driver calls throughout the application — which matters here specifically, since this board has already gone through more than one hardware revision.
+Hardware Rev 2 evolves the board from a general-purpose IoT development board into a **Secure-Ready Battery-Powered Edge Logger**. The Zephyr port therefore extends the existing board definition around three new hardware functions:
 
-There's also a practical, career-facing reason for the choice: Zephyr is the RTOS underpinning a large share of real production IoT and embedded products (Nordic's nRF Connect SDK, many NXP and ST parts), backed by the Linux Foundation with long-term support releases, an active driver ecosystem, and a genuine upstream contribution model. Porting a custom board to it — including working through the board-definition, Devicetree, and Kconfig layers by hand rather than using a vendor-provided starting point — is a closer approximation of how embedded firmware is actually structured in industry than an Arduino sketch, and was worth the added complexity for that reason alone.
+- **DS3231SN** — persistent battery-backed absolute timekeeping for timestamped logging
+- **BQ27441-G1A** — battery fuel gauging and battery-state observability
+- **NXP EdgeLock SE050E2** — secure-element I²C transport for NXP Plug & Trust middleware
 
-The port adds `iot_sensor_node_esp32c3` as a native Zephyr board target, exposing the board's peripherals through Devicetree and Kconfig so that standard Zephyr applications can be built against the hardware without board-specific application code.
+The existing Rev 1 support remains in place:
 
-```
+- BME280 environmental sensor over I²C
+- TEMT6000 ambient-light input through ADC
+- MAX4466 microphone-amplifier output through ADC
+- W25Q32 SPI NOR flash
+- microSD storage over SPI
+- CP2102N UART console/programming path
+- BOOT GPIO
+- native ESP32-C3 USB/JTAG capability on GPIO18/GPIO19
+
+The port adds `iot_sensor_node_esp32c3` as a native Zephyr board target, exposing the board's peripherals through Devicetree and Kconfig so standard Zephyr applications can be built against the custom hardware without hard-coding board-specific peripheral details into application source.
+
+```text
 Existing Zephyr ESP32-C3 SoC support
         │
         ▼
 Custom board Devicetree
         │
         ├── BME280 (I²C)
+        ├── DS3231SN RTC (I²C)
+        ├── BQ27441-G1A fuel gauge (I²C)
+        ├── SE050E2 transport (I²C / Plug & Trust)
         ├── OLED connector (I²C)
         ├── W25Q32 flash (SPI)
         ├── SD card (SPI)
         ├── CP2102N UART bridge
         ├── ADC-connected analog sensors
-        └── GPIO / buttons / USB-JTAG breakout
+        ├── BOOT GPIO
+        └── GPIO18/GPIO19 USB-JTAG breakout
 ```
 
-Reference starting point: the existing **ESP32-C3-DevKitC** board support included in Zephyr was adapted rather than copied — Devicetree, pinctrl, Kconfig, build, and debug configuration were each modified to match the custom hardware.
+Reference starting point: the existing **ESP32-C3-DevKitC** board support included in Zephyr was adapted rather than copied blindly. Devicetree, pinctrl, Kconfig, build integration, heap configuration, storage nodes, and debug configuration were modified to match the custom hardware.
+
+### Rev 1 → Rev 2 software evolution
+
+The Rev 2 transition required only limited board-support changes because the original architecture already used a shared I²C bus and standard Zephyr peripheral descriptions.
+
+The main Rev 2 changes are:
+
+- added the modern **DS3231 MFD + RTC child-node** structure
+- assigned **GPIO8** to DS3231 `INT/SQW`
+- added **BQ27441-G1A** at I²C address `0x55`
+- added `se05x-i2c = &i2c0;` for NXP Plug & Trust transport
+- retained the existing BME280, OLED header, SPI, ADC, UART, BOOT, and USB/JTAG configuration
+
+The **TPS63802 buck-boost regulator** does not require a Zephyr node in the current design because enable/mode behavior is hardware-strapped and its power-good output is not connected to the MCU.
 
 ---
 
@@ -57,20 +91,40 @@ Reference starting point: the existing **ESP32-C3-DevKitC** board support includ
 |---|---|---|
 | MCU | ESP32-C3-WROOM-02-H4 | — |
 | Temperature / Humidity / Pressure | BME280 | I²C |
+| Real-Time Clock | DS3231SN | I²C + GPIO8 `INT/SQW` |
+| Battery Fuel Gauge | BQ27441-G1A | I²C |
+| Secure Element | NXP EdgeLock SE050E2 | I²C via NXP Plug & Trust |
+| Display Expansion | OLED connector | I²C |
 | Ambient Light | TEMT6000X01 | ADC |
 | Microphone | CMC-5042PF-AC + MAX4466EXK | ADC |
 | External Flash | W25Q32JVSSIQ | SPI |
 | SD Card | GSD090012SEU | SPI |
 | USB-UART Bridge | CP2102N-Axx-xQFN20 | UART |
-| Display Expansion | OLED connector | I²C |
 | Debugging | ESP32-C3 native USB/JTAG | GPIO18 / GPIO19 |
-| User Input | BOOT / EN buttons | GPIO |
+| User Input | BOOT / EN buttons | GPIO / hardware reset |
+| 3.3 V Regulation | TPS63802 | Hardware-managed; no current Zephyr node |
+
+The Rev 2 I²C peripherals share the same physical bus:
+
+```text
+ESP32-C3 I²C0
+    SDA → GPIO4
+    SCL → GPIO3
+        │
+        ├── BME280
+        ├── OLED header
+        ├── DS3231SN
+        ├── BQ27441-G1A
+        └── SE050E2
+```
+
+The base board configuration currently uses **I²C standard mode (100 kHz)**.
 
 ---
 
 ## 3. Board Directory Structure
 
-```
+```text
 zephyr/boards/others/iot_sensor_node_esp32c3/
 │
 ├── board.cmake
@@ -99,7 +153,7 @@ zephyr/boards/others/iot_sensor_node_esp32c3/
 | Debugging | `support/openocd.cfg` |
 | Documentation | `doc/index.rst` |
 
-No board-specific `CMakeLists.txt` is required — the board relies entirely on Zephyr's existing ESP32 board infrastructure.
+No board-specific `CMakeLists.txt` is required — the board reuses Zephyr's existing ESP32 board infrastructure.
 
 ### Board Metadata
 
@@ -126,9 +180,11 @@ supported:
   - entropy
 ```
 
+The vendor remains `espressif` because the custom PCB uses Espressif's ESP32-C3 SoC/platform support.
+
 ### Build Integration
 
-`board.cmake` reuses Zephyr's common ESP32 and OpenOCD runner infrastructure rather than implementing custom flashing logic:
+`board.cmake` reuses Zephyr's common ESP32 and OpenOCD runner infrastructure:
 
 ```cmake
 include(${ZEPHYR_BASE}/boards/common/esp32.board.cmake)
@@ -141,16 +197,25 @@ include(${ZEPHYR_BASE}/boards/common/openocd.board.cmake)
 
 | File | Responsibility |
 |---|---|
-| `Kconfig` | Board Kconfig entry point — exposes board-specific symbols to the configuration system |
+| `Kconfig` | Board-specific Kconfig options, including additional heap required by the ESP32-C3 HAL integration |
 | `Kconfig.board` | Identifies the board and selects the underlying ESP32-C3 SoC configuration |
-| `Kconfig.defconfig` | Board-specific default configuration (console, serial, GPIO) |
+| `Kconfig.defconfig` | Board defaults for console, serial, UART console, and GPIO |
 | `Kconfig.sysbuild` | Sysbuild / MCUboot defaults |
 
-`Kconfig.board` selects the existing Zephyr ESP32-C3-WROOM SoC support rather than introducing a new SoC implementation:
+`Kconfig.board` selects the existing ESP32-C3-WROOM SoC support rather than introducing a new SoC implementation:
 
 ```kconfig
 config BOARD_IOT_SENSOR_NODE_ESP32C3
     select SOC_ESP32C3_WROOM_02_N4
+```
+
+`Kconfig.defconfig` supplies the board's baseline defaults:
+
+```kconfig
+CONFIG_CONSOLE=y
+CONFIG_SERIAL=y
+CONFIG_UART_CONSOLE=y
+CONFIG_GPIO=y
 ```
 
 `Kconfig.sysbuild` configures the board to participate in Sysbuild with MCUboot:
@@ -165,11 +230,13 @@ choice BOOT_SIGNATURE_TYPE
 endchoice
 ```
 
+MCUboot support here is separate from the SE050 secure element. The board should not be described as having secure boot merely because the secure element is fitted.
+
 ### Board Heap Configuration
 
-The ESP32-C3 Espressif HAL uses Zephyr's dynamic kernel allocator for components including SPI flash handling and interrupt allocation. Without additional heap headroom, linking failed with unresolved references to `k_malloc`, originating from those HAL components.
+During the original port, linking failed with unresolved references to `k_malloc` from Espressif HAL components used for functions including SPI flash handling and interrupt allocation.
 
-The board therefore provides additional kernel heap through `Kconfig.defconfig`:
+The board therefore adds heap headroom in `Kconfig`:
 
 ```kconfig
 config HEAP_MEM_POOL_ADD_SIZE_BOARD
@@ -177,7 +244,7 @@ config HEAP_MEM_POOL_ADD_SIZE_BOARD
     default 4096
 ```
 
-This is board-level configuration rather than application-level, since the requirement originates from the ESP32-C3 HAL/board integration itself. Applications with larger dynamic-memory needs can still extend the heap through their own configuration.
+This is an existing board-integration requirement rather than a Rev 2-specific change. The RTC, fuel-gauge, and SE050 transport additions did not require changing it.
 
 ---
 
@@ -185,93 +252,227 @@ This is board-level configuration rather than application-level, since the requi
 
 The hardware description is split across two files:
 
-- **`iot_sensor_node_esp32c3.dts`** — board-level hardware description
-- **`iot_sensor_node_esp32c3-pinctrl.dtsi`** — pin multiplexing, kept separate to isolate GPIO-matrix configuration from peripheral definitions
+- **`iot_sensor_node_esp32c3.dts`** — board-level hardware description and peripheral topology
+- **`iot_sensor_node_esp32c3-pinctrl.dtsi`** — ESP32-C3 pin multiplexing / GPIO-matrix configuration
+
+Rev 2 primarily extends the board `.dts`; the existing UART, I²C, and SPI pinctrl assignments remain valid.
 
 ### GPIO Assignment
 
 | Function | GPIO | Interface | Notes |
 |---|---:|---|---|
-| I²C SDA | GPIO4 | I²C | BME280 + OLED connector |
-| I²C SCL | GPIO3 | I²C | BME280 + OLED connector |
+| Microphone ADC | GPIO0 | ADC | MAX4466 output |
+| Ambient Light ADC | GPIO1 | ADC | TEMT6000 output |
+| SPI MISO | GPIO2 | SPI | Shared bus |
+| I²C SCL | GPIO3 | I²C | Shared Rev 2 I²C bus |
+| I²C SDA | GPIO4 | I²C | Shared Rev 2 I²C bus |
+| SD Card CS | GPIO5 | SPI | Dedicated chip select |
 | SPI SCLK | GPIO6 | SPI | Shared bus |
 | SPI MOSI | GPIO7 | SPI | Shared bus |
-| SPI MISO | GPIO2 | SPI | Shared bus |
+| RTC `INT/SQW` | GPIO8 | GPIO | DS3231 alarm / square-wave output |
+| BOOT | GPIO9 | GPIO | Active-low BOOT input |
 | W25Q32 CS | GPIO10 | SPI | Dedicated chip select |
-| SD Card CS | GPIO5 | SPI | Dedicated chip select |
-| UART TX | GPIO21 | UART | CP2102N RXD |
-| UART RX | GPIO20 | UART | CP2102N TXD |
 | USB D− | GPIO18 | USB / JTAG | Exposed as breakout |
 | USB D+ | GPIO19 | USB / JTAG | Exposed as breakout |
+| UART RX | GPIO20 | UART | CP2102N TXD |
+| UART TX | GPIO21 | UART | CP2102N RXD |
+
+GPIO8 is no longer a spare expansion pin in Rev 2 because it is assigned to the DS3231 `INT/SQW` signal.
 
 ### I²C
 
-SDA/SCL are shared across the bus's peripherals, with external pull-ups provided by the hardware design.
+The Rev 2 bus is enabled on `i2c0`:
 
-- **BME280** — `compatible = "bosch,bme280";` — exposed through Zephyr's standard sensor API (temperature, pressure, humidity)
-- **OLED connector** — shares the same bus; kept generic in the base board definition rather than binding a specific display driver, so different compatible I²C displays can be attached and configured through an application overlay
+```dts
+&i2c0 {
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_STANDARD>;
+    pinctrl-0 = <&i2c0_default>;
+    pinctrl-names = "default";
+};
+```
+
+The physical bus uses SDA on GPIO4, SCL on GPIO3, and one shared external pull-up network.
+
+#### BME280
+
+```dts
+bme280@76 {
+    compatible = "bosch,bme280";
+    reg = <0x76>;
+};
+```
+
+The BME280 is exposed through Zephyr's standard sensor API.
+
+#### OLED connector
+
+The OLED connector remains generic in the base board definition. It shares the I²C bus electrically, but no specific OLED device is forced into the board DTS. A specific display can be added through an application overlay.
+
+#### DS3231SN — MFD + RTC
+
+Zephyr 4.2.0-rc1 provides the modern DS3231 bindings:
+
+- `maxim,ds3231-mfd`
+- `maxim,ds3231-rtc`
+
+The chip is represented as an MFD parent with an RTC child:
+
+```dts
+ds3231: rtc@68 {
+    compatible = "maxim,ds3231-mfd";
+    reg = <0x68>;
+    status = "okay";
+
+    ds3231_rtc: rtc {
+        compatible = "maxim,ds3231-rtc";
+        isw-gpios = <&gpio0 8 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        status = "okay";
+    };
+};
+```
+
+The RTC sample uses the functional RTC child through:
+
+```dts
+aliases {
+    rtc = &ds3231_rtc;
+};
+```
+
+This matters because the MFD parent represents the shared DS3231 chip infrastructure, while the child implements Zephyr's RTC API.
+
+#### BQ27441-G1A Fuel Gauge
+
+The fuel gauge uses Zephyr's `ti,bq274xx` binding:
+
+```dts
+bq27441: fuel-gauge@55 {
+    compatible = "ti,bq274xx";
+    reg = <0x55>;
+    design-voltage = <3700>;
+    design-capacity = <2000>;
+    taper-current = <55>;
+    terminate-voltage = <3000>;
+    zephyr,lazy-load;
+    status = "okay";
+};
+```
+
+Current design parameters:
+
+- I²C address: `0x55`
+- nominal battery voltage: `3700 mV`
+- design capacity: `2000 mAh`
+- taper current: `55 mA`
+- terminate voltage: `3000 mV`
+
+The battery capacity and termination values are current design assumptions and can be updated when the final cell is fixed.
+
+No interrupt GPIO is described because BQ27441 `GPOUT` is not connected to the ESP32-C3 in the current hardware.
+
+#### SE050E2 Secure Element
+
+The SE050E2 is **not** represented by an invented native Zephyr `se050@48` node.
+
+Instead, the board exposes the I²C controller used by the secure element to NXP Plug & Trust through:
+
+```dts
+aliases {
+    se05x-i2c = &i2c0;
+};
+```
+
+The secure-element protocol stack is supplied by the **NXP Plug & Trust Nano Package** as an external Zephyr module.
+
+```text
+Zephyr board DTS
+    │
+    └── identifies the I²C transport
+            │
+            ▼
+NXP Plug & Trust middleware
+            │
+            ▼
+        SE050E2
+```
+
+The presence of the SE050E2 makes the platform **secure-ready**. Key generation, provisioning, signing, authentication, TLS credentials, and other security workflows remain application/middleware responsibilities.
 
 ### SPI
 
-W25Q32 and the SD card share SCLK/MOSI/MISO with independent chip-select lines:
+W25Q32 and microSD share SCLK/MOSI/MISO with independent chip-select lines:
 
-```
-                ┌── W25Q32 (SPI NOR)      CS → GPIO10
+```text
+                ┌── W25Q32 SPI NOR     CS → GPIO10
 ESP32-C3 SPI ───┤
-                └── SD Card               CS → GPIO5
+                └── microSD            CS → GPIO5
 ```
 
-- **W25Q32** — `compatible = "jedec,spi-nor";`. The node includes explicit JEDEC ID and flash-size properties, required when runtime SFDP discovery is not enabled.
-- **SD Card** — `compatible = "zephyr,sdhc-spi-slot";` at 20 MHz, exposing storage through `compatible = "zephyr,sdmmc-disk";` so applications access it via Zephyr's storage subsystem rather than driving SPI directly.
+- **W25Q32** — `compatible = "jedec,spi-nor";` with explicit JEDEC ID and flash-size properties.
+- **microSD** — `compatible = "zephyr,sdhc-spi-slot";` with a nested `compatible = "zephyr,sdmmc-disk";` child.
+
+The current SD SPI frequency is **25 MHz**.
 
 ### ADC
 
-The ADC controller is inherited from the ESP32-C3 SoC definition (`compatible = "espressif,esp32-adc";`) and enabled at board level. Analog peripherals (microphone amplifier output, ambient light sensor) are connected via Zephyr's `io-channels` mechanism, exposing them through the standard Zephyr ADC API rather than direct register access.
+The ESP32-C3 ADC controller is inherited from the SoC definition and enabled at board level.
+
+The original port required channel-oriented child addressing:
+
+```dts
+&adc0 {
+    #address-cells = <1>;
+    #size-cells = <0>;
+    ...
+};
+```
+
+This prevents ADC channel child nodes from inheriting the `/soc` address/size-cell format.
+
+The board exposes the MAX4466 microphone output through GPIO0 and the TEMT6000 ambient-light signal through GPIO1 using Zephyr's ADC infrastructure.
 
 ### UART
 
-CP2102N ↔ ESP32-C3, using the SoC's inherited UART driver:
+CP2102N ↔ ESP32-C3 uses UART0:
 
-```
+```text
 CP2102N TXD ──────────────▶ GPIO20 (ESP32-C3 RX)
 CP2102N RXD ◀────────────── GPIO21 (ESP32-C3 TX)
 ```
 
-Serves as the board's primary console/log/serial interface.
+This remains the primary serial console/log/programming path.
 
 ### Buttons
 
-**BOOT** is a genuine GPIO (GPIO9) and is represented as a GPIO node in the board Devicetree, making it accessible through Zephyr's standard GPIO API when an application needs software-visible access to it.
+**BOOT** is connected to GPIO9 and represented as a `gpio-keys` input.
 
-**EN** is the ESP32-C3's dedicated hardware enable/reset pin — it sits outside the GPIO matrix entirely and is not a GPIO in any capacity. It cannot be represented as a Devicetree GPIO node; it is purely a hardware-level reset control, not a software-visible resource.
+**EN** is the ESP32-C3 hardware enable/reset input. It is outside the GPIO matrix and is not represented as a normal software-visible GPIO node.
 
 ### USB / JTAG — Design Decision
 
-GPIO18/GPIO19 carry the ESP32-C3's native USB D−/D+ signals, which double as its built-in USB/JTAG debug interface. Rather than permanently reserving these pins for debugging, they are exposed as general breakout pins in the base board definition. USB/JTAG functionality is enabled on demand through the OpenOCD configuration and, where needed, a Devicetree overlay — leaving the pins available for other application use whenever debugging isn't active.
+GPIO18/GPIO19 carry native USB D−/D+ and the ESP32-C3 built-in USB/JTAG interface.
+
+The base Devicetree leaves them unassigned so they remain available as breakout pins when native USB/JTAG is not in use. When USB/JTAG debugging is active, those pins are occupied by the debug interface.
 
 ### Devicetree Overlays
 
-The base `.dts` describes the board's default hardware configuration; application-specific needs (alternate use of GPIO18/19, additional peripherals, display selection) are handled through overlays rather than modifying the board definition itself — allowing one board port to serve multiple applications cleanly.
+The base `.dts` describes hardware fixed on the PCB. Application-specific choices remain in overlays, such as binding a specific OLED model or assigning external breakout peripherals.
 
 ---
 
 ## 6. Debugging / OpenOCD
 
-`support/openocd.cfg` supports two debug paths:
+The current `support/openocd.cfg` uses the ESP32-C3 built-in USB/JTAG interface:
 
 ```tcl
 set ESP_RTOS none
-
-# ESP32-C3 built-in USB/JTAG over GPIO18/GPIO19 (D-/D+)
-# source [find interface/esp_usb_jtag.cfg]
-
-# External ESP-Prog JTAG (default)
-source [find interface/ftdi/esp32_devkitj_v1.cfg]
+source [find interface/esp_usb_jtag.cfg]
 source [find target/esp32c3.cfg]
 adapter speed 5000
 ```
 
-External ESP-Prog is enabled by default; the native USB/JTAG path can be swapped in by uncommenting the corresponding interface line. OpenOCD itself is located via the Espressif toolchain path through `board.cmake`.
+This uses the native USB/JTAG peripheral on GPIO18/GPIO19 and does not require an external FTDI-based ESP-Prog interface.
 
 ---
 
@@ -279,23 +480,54 @@ External ESP-Prog is enabled by default; the native USB/JTAG path can be swapped
 
 To build against this board, a working Zephyr workspace is required:
 
-- **Zephyr SDK** matching the Zephyr 4.2.0-rc1 toolchain requirements
-- **`west`** (Zephyr's meta-tool) and a Python environment with Zephyr's `requirements.txt` installed
-- **Espressif toolchain** (provides `openocd`, used by `board.cmake`'s OpenOCD path lookup)
+- **Zephyr 4.2.0-rc1**
+- **Zephyr SDK** compatible with the selected Zephyr version
+- **`west`** and Zephyr's Python dependencies
+- **Espressif toolchain / OpenOCD** for ESP32-C3 flashing/debugging
 
 ### Adding the board to a workspace
 
-This board directory is not part of upstream Zephyr, so it needs to be made visible to the build system in one of two ways:
+The board directory is custom and not part of upstream Zephyr.
 
-**Option A — custom board root (recommended, no upstream files touched):**
+**Option A — custom board root:**
+
 ```bash
 west build -b iot_sensor_node_esp32c3 samples/hello_world \
     -- -DBOARD_ROOT=<path-to-this-repo>/zephyr
 ```
-This assumes the board directory lives at `<repo>/zephyr/boards/others/iot_sensor_node_esp32c3/` as shown in [Section 3](#3-board-directory-structure).
 
-**Option B — copy into the Zephyr tree:**
-Place `boards/others/iot_sensor_node_esp32c3/` directly under your local `zephyr/boards/others/` directory. Simpler for a one-off build, but the board definition then lives outside version control for your Zephyr checkout.
+This assumes the board directory lives at:
+
+```text
+<repo>/zephyr/boards/others/iot_sensor_node_esp32c3/
+```
+
+**Option B — copy the board directory into the Zephyr tree:**
+
+```text
+zephyr/boards/others/iot_sensor_node_esp32c3/
+```
+
+### SE050 / NXP Plug & Trust
+
+SE050 support uses NXP's Plug & Trust Nano Package rather than a native in-tree Zephyr SE050 driver.
+
+The module used for Rev 2 development is placed under:
+
+```text
+modules/crypto/nxp-plugandtrust/
+```
+
+Example build command for NXP's `se05x_GetInfo` Zephyr example:
+
+```powershell
+west build -p always `
+  -b iot_sensor_node_esp32c3 `
+  ..\modules\crypto\nxp-plugandtrust\examples\se05x_GetInfo\zephyr `
+  -- -DZEPHYR_EXTRA_MODULES="C:\Users\Admin\zephyr_workspace\zephyrproject\modules\crypto\nxp-plugandtrust"
+```
+
+The workspace path is machine-specific; the important part is making the NXP module visible through `ZEPHYR_EXTRA_MODULES`.
 
 ---
 
@@ -307,17 +539,49 @@ The board is selected by its identifier:
 west build -b iot_sensor_node_esp32c3 samples/hello_world
 ```
 
-Use a pristine build after changing board-level Devicetree, pinctrl, or Kconfig:
+Use a pristine build after changing board-level Devicetree, pinctrl, Kconfig, or module configuration:
 
 ```bash
-west build -b iot_sensor_node_esp32c3 samples/hello_world -p always
+west build -p always -b iot_sensor_node_esp32c3 samples/hello_world
 ```
+
+### Rev 2 validation builds
+
+#### Base board
+
+```bash
+west build -p always -b iot_sensor_node_esp32c3 samples/hello_world
+```
+
+Validates board discovery, Devicetree generation, Kconfig processing, compilation, linking, and ESP32-C3 image generation.
+
+#### BQ27441 fuel gauge
+
+```bash
+west build -p always -b iot_sensor_node_esp32c3 samples/sensor/sensor_shell
+```
+
+This validates the BQ27441 node and Zephyr sensor-subsystem integration.
+
+#### DS3231 RTC
+
+The RTC sample targets the functional RTC child through:
+
+```dts
+aliases {
+    rtc = &ds3231_rtc;
+};
+```
+
+#### SE050E2
+
+NXP's `se05x_GetInfo` Zephyr example is built using the Plug & Trust external module described in Section 7.
 
 ### Application Overlay
 
-Board-level hardware description stays fixed; application-specific needs are layered in via an overlay:
+Board-level hardware description stays fixed; application-specific needs are layered in through an overlay:
 
-```
+```text
 app/
 ├── CMakeLists.txt
 ├── prj.conf
@@ -329,16 +593,17 @@ app/
 
 ### Application Configuration
 
-Zephyr subsystems needed by a given application are enabled in `prj.conf`, not the board files:
+Zephyr subsystems required by an application are enabled in `prj.conf`, not forced globally by the board definition:
 
 ```conf
 CONFIG_GPIO=y
 CONFIG_I2C=y
 CONFIG_SPI=y
 CONFIG_SENSOR=y
+CONFIG_RTC=y
 ```
 
-This keeps the board definition (hardware description) cleanly separated from application requirements (software feature selection), so the same port supports multiple applications without modification.
+Only the subsystems required by the application need to be enabled.
 
 ---
 
@@ -346,12 +611,16 @@ This keeps the board definition (hardware description) cleanly separated from ap
 
 | Problem | Cause | Resolution |
 |---|---|---|
-| `undefined reference to 'k_malloc'` at link time | Missing board-level heap allocation for ESP32-C3 HAL components (SPI flash handling, interrupt allocation) | Added `HEAP_MEM_POOL_ADD_SIZE_BOARD` (4096 bytes) to board Kconfig |
-| `'reg' property ... has length 4, which is not evenly divisible by 12` | Inherited ADC Devicetree node used a `reg` property with the wrong cell count for the ESP32-C3's 2 address-cell / 1 size-cell configuration | Corrected the ADC node's `reg` property to match the parent's address/size-cell layout |
-| `jedec,spi-nor jedec-id required for non-runtime SFDP` / `size required for non-runtime SFDP page layout` | W25Q32 Devicetree node was missing required JEDEC ID and flash-size properties | Added the required properties to the SPI NOR node |
-| SD card not represented correctly | Missing/incorrect `zephyr,sdhc-spi-slot` binding structure | Added the correct SDHC SPI slot node with a nested `zephyr,sdmmc-disk` child |
+| `undefined reference to 'k_malloc'` at link time | ESP32-C3 Espressif HAL components required Zephyr dynamic allocation but the board lacked the required board-level heap headroom | Added `HEAP_MEM_POOL_ADD_SIZE_BOARD = 4096` in board `Kconfig` |
+| ADC child-node `reg` / address-cell error | ADC channel child nodes were inheriting the `/soc` address/size-cell format instead of a channel-oriented child format | Added `#address-cells = <1>;` and `#size-cells = <0>;` to `&adc0` |
+| `jedec,spi-nor jedec-id required for non-runtime SFDP` / `size required ...` | W25Q32 node lacked the required identification and size properties | Added explicit JEDEC ID and flash-size properties |
+| SD card not represented correctly | Missing/incorrect Zephyr SPI SDHC binding structure | Added `zephyr,sdhc-spi-slot` with nested `zephyr,sdmmc-disk` child |
+| RTC sample: `__device_dts_ord_DT_N_ALIAS_rtc_ORD` undeclared | The sample uses `DT_ALIAS(rtc)`, but the custom board initially had no `rtc` alias | Added `rtc = &ds3231_rtc;` |
+| RTC alias initially targeted the DS3231 MFD parent | The parent represents shared chip infrastructure; the RTC API is implemented by the child | Pointed the alias to `ds3231_rtc` |
+| NXP SE050 example aborted with `GPIO_ESP32 ... GPIO with value n` | NXP example `prj.conf` explicitly set `CONFIG_GPIO=n`, conflicting with ESP32 I²C/UART driver requirements | Changed the example configuration to `CONFIG_GPIO=y` |
+| No native SE050 Devicetree binding used | Integration uses NXP Plug & Trust rather than an in-tree Zephyr SE050 driver | Exposed the I²C transport with `se05x-i2c = &i2c0;` instead of inventing a device binding |
 
-Each issue was resolved at the board-definition level, so application code targeting this board doesn't need to work around any of them.
+Each issue was resolved at the board-definition or middleware-integration level rather than through application-specific workarounds.
 
 ---
 
@@ -359,31 +628,87 @@ Each issue was resolved at the board-definition level, so application code targe
 
 | Area | Status |
 |---|---|
-| Board definition, metadata, build integration | Complete |
-| Devicetree | Complete |
-| Pin control | Complete |
-| Kconfig (board defaults, heap, sysbuild) | Complete |
-| GPIO | Implemented |
-| ADC | Implemented |
-| I²C / BME280 | Implemented |
-| SPI / SPI NOR (W25Q32) | Implemented |
-| SD card | Implemented |
-| UART (CP2102N) | Implemented |
-| USB / JTAG configuration | Implemented |
-| OpenOCD integration | Implemented |
+| Custom board discovery | ✅ Build-validated |
+| Board metadata / build integration | ✅ Complete |
+| Devicetree generation | ✅ Build-validated |
+| ESP32-C3 pinctrl | ✅ Build-validated |
+| Kconfig / board heap / sysbuild | ✅ Build-validated |
+| UART / console | ✅ Build-validated |
+| GPIO / BOOT | ✅ Build-validated |
+| ADC | ✅ Build-validated |
+| BME280 / I²C | ✅ Build-validated |
+| SPI NOR / W25Q32 | ✅ Build-validated |
+| microSD | ✅ Build-validated |
+| DS3231 RTC | ✅ Build-validated |
+| BQ27441 fuel gauge | ✅ Build-validated |
+| SE050 Plug & Trust integration | ✅ Build-validated |
+| Native USB/JTAG / OpenOCD | ✅ Configured |
 
-Validated through Zephyr's full build pipeline (Devicetree generation → Kconfig processing → compilation → linking → ESP32-C3 image generation), and confirmed by building relevant Zephyr samples against each subsystem above.
+The Rev 2 board definition has been validated through Zephyr's build pipeline:
 
-**Not yet implemented:** DS3231 RTC (planned — will be added to this port once integrated into the hardware design).
+```text
+Board discovery
+    ↓
+Devicetree preprocessing / generation
+    ↓
+Kconfig processing
+    ↓
+Compilation
+    ↓
+Linking
+    ↓
+ESP32-C3 image generation
+```
+
+Relevant Zephyr samples and the NXP middleware example have built successfully against the current board definition.
 
 ---
 
 ## 11. References
 
-**Zephyr** — Project documentation, board porting guide, Devicetree documentation, Kconfig documentation, device driver documentation, ESP32 board support.
+**Zephyr Project** — board porting guide, Devicetree documentation, Kconfig documentation, RTC API, sensor API, storage subsystem, and ESP32-C3 board/SoC support.
 
-**Espressif** — ESP32-C3 documentation, ESP32-C3-WROOM-02 datasheet, ESP32-C3 Technical Reference Manual, Espressif HAL, Espressif OpenOCD.
+**Espressif** — ESP32-C3 documentation, ESP32-C3-WROOM-02 datasheet, ESP32-C3 Technical Reference Manual, Espressif HAL, native USB/JTAG, and Espressif OpenOCD.
 
-**Component datasheets** — ESP32-C3-WROOM-02-H4, BME280, W25Q32JV, CP2102N, MCP73871, LM1117, MAX4466, TEMT6000, SD card interface specification.
+**NXP** — EdgeLock SE050E2 documentation and Plug & Trust Nano Package / Zephyr examples.
 
-**Reference implementation** — Zephyr's built-in ESP32-C3-DevKitC board support, used as the adaptation baseline for this port.
+**Texas Instruments** — BQ27441-G1A fuel-gauge documentation and TPS63802 regulator documentation.
+
+**Analog Devices / Maxim Integrated** — DS3231SN datasheet and RTC documentation.
+
+**Other component documentation** — BME280, W25Q32JV, CP2102N, MCP73871, MAX4466, TEMT6000, and SD card interface documentation.
+
+**Reference implementation** — Zephyr's built-in ESP32-C3-DevKitC board support, used as the adaptation baseline for the custom board port.
+
+---
+
+## 12. Revision History
+
+### Zephyr v1.0 — IoT Development Board
+
+Initial custom board port covering the original ESP32-C3 IoT platform:
+
+- custom board discovery and metadata
+- Kconfig / heap integration
+- custom Devicetree and pinctrl
+- UART console
+- BOOT GPIO
+- BME280
+- ADC sensor channels
+- W25Q32 SPI NOR
+- microSD over SPI
+- native USB/JTAG configuration
+
+### Zephyr v2.0 — Secure-Ready Battery-Powered Edge Logger
+
+Extends the Rev 1 board support for Hardware Rev 2:
+
+- DS3231SN MFD/RTC integration
+- RTC alias targeting the functional RTC child
+- GPIO8 `INT/SQW` allocation
+- BQ27441-G1A fuel-gauge node
+- NXP SE050E2 I²C transport alias
+- NXP Plug & Trust build integration
+- Rev 2 subsystem build validation
+
+Hardware runtime validation remains pending Rev 2 PCB fabrication and bring-up.
