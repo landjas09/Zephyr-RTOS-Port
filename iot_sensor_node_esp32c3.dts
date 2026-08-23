@@ -22,6 +22,8 @@
 		sw0 = &boot_button;
 		i2c-0 = &i2c0;
 		watchdog0 = &wdt0;
+                rtc= &ds3231_rtc;
+                se05x-i2c = &i2c0;
 	};
 
         gpio_keys {
@@ -44,6 +46,12 @@
                 zephyr,code = <INPUT_KEY_0>;
                 };
         };
+        
+      /*
+       * SE050E2 is physically present on this bus.
+       * Access is provided through the NXP Plug & Trust
+       * middleware using the se05x-i2c alias.
+       */
 };
 
 &uart0 {
@@ -63,6 +71,20 @@
 		compatible = "bosch,bme280";
 		reg = <0x76>;
 	};
+        
+        ds3231: rtc@68 {
+        compatible = "maxim,ds3231-mfd";
+        reg = <0x68>;
+        status = "okay";
+
+        ds3231_rtc: rtc {
+            compatible = "maxim,ds3231-rtc";
+
+            isw-gpios = <&gpio0 8 (GPIO_ACTIVE_LOW)>;
+
+            status = "okay";
+            };
+        };
 
         /*
          * OLED NODE:
@@ -72,6 +94,19 @@
          * Users must provide an application overlay defining the
          * compatible OLED controller and its required properties.
          */
+         
+        bq27441: fuel-gauge@55 {
+        compatible = "ti,bq274xx";
+        reg = <0x55>;
+
+        design-voltage = <3700>;
+        design-capacity = <2000>;
+        taper-current = <55>;
+        terminate-voltage = <3000>;
+
+        zephyr,lazy-load;
+        status = "okay";
+        };
 };
 
 &spi2 {
@@ -183,7 +218,6 @@
         * The following GPIOs are exposed on the breakout header and are left
         * unassigned in the base board definition:
         *
-        *   GPIO8
         *   GPIO18
         *   GPIO19
         *
