@@ -80,7 +80,7 @@
         ds3231_rtc: rtc {
             compatible = "maxim,ds3231-rtc";
 
-            isw-gpios = <&gpio0 8 (GPIO_ACTIVE_LOW)>;
+            isw-gpios = <&gpio0 5 (GPIO_ACTIVE_LOW)>;
 
             status = "okay";
             };
@@ -118,7 +118,7 @@
 	pinctrl-names = "default";
 
 	cs-gpios = <&gpio0 10 GPIO_ACTIVE_LOW>,
-		   <&gpio0 5 GPIO_ACTIVE_LOW>;
+		   <&gpio0 8 GPIO_ACTIVE_LOW>;
 
 	flash@0 {
 		compatible = "jedec,spi-nor";
@@ -218,6 +218,7 @@
         * The following GPIOs are exposed on the breakout header and are left
         * unassigned in the base board definition:
         *
+        *   GPIO8
         *   GPIO18
         *   GPIO19
         *
